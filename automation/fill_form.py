@@ -27,7 +27,7 @@ from datetime import datetime
 class Config:
     """API keys and settings"""
     # MORVO TempMail API
-    TEMPMAIL_API_KEY = os.getenv("TEMPMAIL_API_KEY", "whsec_95b98cc8f3bdd6f7167e2921a9047fde50952e678f22b236")
+    TEMPMAIL_API_KEY = os.getenv("TEMPMAIL_API_KEY", "tm_58e31bdd5cb0c6d2b8c4e312b82c8c2a")
     TEMPMAIL_BASE_URL = "https://adzstore.my.id/api/external/mailbox"
 
     # sctg.xyz Captcha API

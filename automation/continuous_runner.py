@@ -267,7 +267,7 @@ class WorkflowEngine:
     async def _run_step(self, step: Dict) -> str:
         prompt = step["prompt"]
         for dep in step["depends_on"]:
-            prompt = prompt.replace(f"{{{{{dep}}}}}", self.results.get(dep, ""))
+            prompt = prompt.replace(f"{{{chr(123)}dep{chr(125)}}}", self.results.get(dep, ""))
         return await step["agent"].run(prompt)
 
 async def main():
