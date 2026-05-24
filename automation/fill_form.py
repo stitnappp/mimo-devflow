@@ -304,15 +304,40 @@ class FormFiller:
         await self.page.goto(Config.FORM_URL, wait_until="domcontentloaded", timeout=60000)
         await asyncio.sleep(3)
 
-        # Click "立即申请" (Apply Now)
-        apply_btn = self.page.locator("button:has-text('立即申请')")
-        await apply_btn.click()
-        await asyncio.sleep(2)
+        # Click "立即申请" (Apply Now) - try multiple selectors
+        try:
+            apply_btn = self.page.locator("button:has-text('立即申请')")
+            if await apply_btn.count() > 0:
+                await apply_btn.first.click()
+                print("[Form] Clicked '立即申请' button")
+            else:
+                # Try clicking by text content
+                await self.page.get_by_text("立即申请").click()
+                print("[Form] Clicked '立即申请' by text")
+        except Exception as e:
+            print(f"[Form] Apply button: {e}")
+            # Try scrolling to find it
+            await self.page.evaluate("window.scrollTo(0, 0)")
+            await asyncio.sleep(2)
+            await self.page.locator("button:has-text('立即申请')").first.click()
+
+        # Wait for form to appear
+        await asyncio.sleep(3)
+
+        # Verify form loaded by checking for email input
+        email_input = self.page.locator("input[type='email']")
+        try:
+            await email_input.wait_for(state="visible", timeout=15000)
+            print("[Form] Form loaded, email input visible")
+        except:
+            print("[Form] WARNING: Email input not found, trying to continue anyway")
+
         print("[Form] Navigated to application form")
 
     async def fill_email(self):
         """Fill in the email field"""
-        email_input = self.page.locator("input[placeholder*='邮箱'], input[type='email']").first
+        email_input = self.page.locator("input[type='email']").first
+        await email_input.wait_for(state="visible", timeout=15000)
         await email_input.fill(self.email)
         print(f"[Form] Email filled: {self.email}")
 
@@ -358,7 +383,8 @@ class FormFiller:
 
     async def fill_github_link(self, link: str):
         """Fill in GitHub project link"""
-        github_input = self.page.locator("input[placeholder*='GitHub'], input[placeholder*='演示']").first
+        github_input = self.page.locator("input[type='url']").first
+        await github_input.wait_for(state="visible", timeout=10000)
         await github_input.fill(link)
         await asyncio.sleep(0.5)
         print(f"[Form] GitHub link filled: {link}")
