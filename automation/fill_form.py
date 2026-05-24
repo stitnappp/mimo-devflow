@@ -301,8 +301,8 @@ class FormFiller:
 
     async def navigate_to_form(self):
         """Navigate to the application form"""
-        await self.page.goto(Config.FORM_URL, wait_until="networkidle")
-        await asyncio.sleep(2)
+        await self.page.goto(Config.FORM_URL, wait_until="domcontentloaded", timeout=60000)
+        await asyncio.sleep(3)
 
         # Click "立即申请" (Apply Now)
         apply_btn = self.page.locator("button:has-text('立即申请')")
