@@ -301,38 +301,27 @@ class FormFiller:
 
     async def navigate_to_form(self):
         """Navigate to the application form"""
-        await self.page.goto(Config.FORM_URL, wait_until="domcontentloaded", timeout=60000)
+        await self.page.goto(Config.FORM_URL, wait_until="networkidle", timeout=60000)
         await asyncio.sleep(3)
 
-        # Click "立即申请" (Apply Now) - try multiple selectors
-        try:
-            apply_btn = self.page.locator("button:has-text('立即申请')")
-            if await apply_btn.count() > 0:
-                await apply_btn.first.click()
-                print("[Form] Clicked '立即申请' button")
-            else:
-                # Try clicking by text content
-                await self.page.get_by_text("立即申请").click()
-                print("[Form] Clicked '立即申请' by text")
-        except Exception as e:
-            print(f"[Form] Apply button: {e}")
-            # Try scrolling to find it
-            await self.page.evaluate("window.scrollTo(0, 0)")
-            await asyncio.sleep(2)
-            await self.page.locator("button:has-text('立即申请')").first.click()
+        # Click "立即申请" via JavaScript (Playwright click doesn't trigger React events)
+        await self.page.evaluate("""() => {
+            const btn = Array.from(document.querySelectorAll('button')).find(b => b.textContent.includes('立即申请'));
+            if (btn) btn.click();
+        }""")
+        print("[Form] Clicked '立即申请' via JS")
 
-        # Wait for form to appear
-        await asyncio.sleep(3)
+        # Wait for form to render
+        await asyncio.sleep(5)
 
-        # Verify form loaded by checking for email input
+        # Verify form loaded
         email_input = self.page.locator("input[type='email']")
         try:
-            await email_input.wait_for(state="visible", timeout=15000)
-            print("[Form] Form loaded, email input visible")
+            await email_input.wait_for(state="attached", timeout=15000)
+            count = await email_input.count()
+            print(f"[Form] Form loaded! Email inputs: {count}")
         except:
-            print("[Form] WARNING: Email input not found, trying to continue anyway")
-
-        print("[Form] Navigated to application form")
+            print("[Form] WARNING: Email input not found after click")
 
     async def fill_email(self):
         """Fill in the email field"""
