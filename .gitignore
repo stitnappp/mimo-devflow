@@ -81,3 +81,9 @@ mimo_config_local.yaml
 .cache/
 .mypy_cache/
 .ruff_cache/
+
+# Automation secrets
+automation/.env
+*.pyc
+__pycache__/
+.pytest_cache/
