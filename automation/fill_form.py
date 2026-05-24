@@ -364,38 +364,165 @@ class FormFiller:
         print(f"[Form] GitHub link filled: {link}")
 
     async def handle_captcha(self):
-        """Handle captcha if present"""
+        """Handle captcha - properly wait for solve before returning"""
         try:
-            # Check for reCAPTCHA iframe
-            recaptcha_frame = self.page.frame_locator("iframe[src*='recaptcha']")
-            if recaptcha_frame:
-                print("[Form] reCAPTCHA detected, attempting to solve...")
+            await asyncio.sleep(3)
 
-                # Extract sitekey from iframe src
-                iframe = self.page.locator("iframe[src*='recaptcha']").first
-                src = await iframe.get_attribute("src")
-                sitekey = src.split("k=")[1].split("&")[0] if "k=" in src else ""
+            # Check for miverify (Xiaomi's custom captcha wrapper)
+            miverify_count = await self.page.locator("iframe[src*='miverify'], iframe[src*='verify.sec.xiaomi']").count()
+            if miverify_count > 0:
+                print("[Form] Xiaomi miverify detected!")
+                await self._solve_miverify()
+                return
 
-                if sitekey:
-                    solver = CaptchaSolver()
-                    token = await solver.solve_recaptcha_v2(sitekey, Config.FORM_URL)
-                    print(f"[Form] Captcha solved! Token length: {len(token)}")
+            # Check for standard reCAPTCHA
+            recaptcha_count = await self.page.locator("iframe[src*='recaptcha']").count()
+            if recaptcha_count > 0:
+                print("[Form] reCAPTCHA detected!")
+                await self._solve_recaptcha()
+                return
 
-                    # Inject token into g-recaptcha-response
-                    await self.page.evaluate(f"""
-                        document.getElementById('g-recaptcha-response').value = '{token}';
-                    """)
-                    await solver.close()
-                else:
-                    print("[Form] Could not extract sitekey from reCAPTCHA iframe")
+            print("[Form] No captcha detected, proceeding...")
+
         except Exception as e:
-            print(f"[Form] Captcha handling: {e}")
+            print(f"[Form] Captcha handling error: {e}")
+
+    async def _solve_miverify(self):
+        """Solve Xiaomi miverify captcha - waits until done"""
+        solver = CaptchaSolver()
+        try:
+            iframe = self.page.locator("iframe[src*='verify.sec.xiaomi']").first
+            src = await iframe.get_attribute("src")
+            sitekey = src.split("k=")[1].split("&")[0] if src and "k=" in src else ""
+
+            if not sitekey:
+                sitekey = await self.page.evaluate("""() => {
+                    const f = document.querySelector('iframe[src*="verify.sec.xiaomi"]');
+                    return f ? new URL(f.src).searchParams.get('k') || '' : '';
+                }""")
+
+            if not sitekey:
+                print("[Form] Could not extract miverify sitekey")
+                return
+
+            print(f"[Form] miverify sitekey: {sitekey[:20]}...")
+
+            # Click checkbox inside miverify iframe
+            try:
+                frame = self.page.frame_locator("iframe[src*='verify.sec.xiaomi']").first
+                checkbox = frame.locator(".recaptcha-checkbox-border, [role='checkbox']")
+                if await checkbox.count() > 0:
+                    await checkbox.first.click()
+                    print("[Form] Clicked miverify checkbox")
+                    await asyncio.sleep(8)
+            except:
+                pass
+
+            # Solve via API - BLOCKS until solved (up to 3 min)
+            print("[Form] Solving reCAPTCHA via sctg.xyz (blocking, up to 3 min)...")
+            token = await solver.solve_recaptcha_v2(sitekey, Config.FORM_URL)
+            print(f"[Form] ✅ Captcha solved! Token: {len(token)} chars")
+
+            # Call miverify verify endpoint from browser context
+            import time as _t
+            ts = int(_t.time() * 1000)
+            verify_url = f"https://verify.sec.xiaomi.com/captcha/v2/recaptcha/verify?k={sitekey}&locale=en_US&_t={ts}"
+
+            # Inject token into g-recaptcha-response FIRST
+            await self.page.evaluate(f"""() => {{
+                const ta = document.getElementById('g-recaptcha-response');
+                if (ta) ta.style.display = 'block';
+                if (ta) ta.value = `{token}`;
+            }}""")
+
+            # Then call verify endpoint from browser
+            verify_result = await self.page.evaluate(f"""async () => {{
+                try {{
+                    const ta = document.getElementById('g-recaptcha-response');
+                    const tokenVal = ta ? ta.value : '';
+                    const resp = await fetch("{verify_url}", {{
+                        method: "POST",
+                        headers: {{"Content-Type": "application/x-www-form-urlencoded"}},
+                        body: "response=" + encodeURIComponent(tokenVal) + "&old=0",
+                        credentials: "omit"
+                    }});
+                    return await resp.json();
+                }} catch(e) {{ return {{error: e.message}}; }}
+            }}""")
+            print(f"[Form] miverify verify: {verify_result}")
+
+            # If verify returned a flag, use that as captchaToken
+            if isinstance(verify_result, dict):
+                data = verify_result.get("data", {})
+                if isinstance(data, dict) and data.get("flag"):
+                    flag = data["flag"]
+                    print(f"[Form] Got flag token: {len(flag)} chars")
+                    # Inject flag into any captchaToken hidden inputs
+                    await self.page.evaluate(f"""() => {{
+                        document.querySelectorAll('input[name="captchaToken"], input[name="captcha"]').forEach(el => {{
+                            el.value = '{flag}';
+                        }});
+                    }}""")
+
+        except Exception as e:
+            print(f"[Form] miverify error: {e}")
+        finally:
+            await solver.close()
+
+    async def _solve_recaptcha(self):
+        """Solve standard reCAPTCHA v2 - waits until done"""
+        solver = CaptchaSolver()
+        try:
+            iframe = self.page.locator("iframe[src*='recaptcha']").first
+            src = await iframe.get_attribute("src")
+            sitekey = src.split("k=")[1].split("&")[0] if src and "k=" in src else ""
+
+            if not sitekey:
+                print("[Form] Could not extract reCAPTCHA sitekey")
+                return
+
+            print(f"[Form] reCAPTCHA sitekey: {sitekey[:20]}...")
+
+            # Try clicking checkbox first
+            try:
+                frame = self.page.frame_locator("iframe[src*='recaptcha']").first
+                checkbox = frame.locator("#recaptcha-anchor, [role='checkbox']")
+                if await checkbox.count() > 0:
+                    await checkbox.first.click()
+                    print("[Form] Clicked reCAPTCHA checkbox")
+                    await asyncio.sleep(10)
+            except:
+                pass
+
+            # Solve via API - BLOCKS until solved
+            print("[Form] Solving via sctg.xyz (blocking, up to 3 min)...")
+            token = await solver.solve_recaptcha_v2(sitekey, Config.FORM_URL)
+            print(f"[Form] ✅ Solved! Token: {len(token)} chars")
+
+            # Inject token
+            await self.page.evaluate(f"""() => {{
+                const ta = document.getElementById('g-recaptcha-response');
+                if (ta) ta.style.display = 'block';
+                if (ta) ta.value = `{token}`;
+            }}""")
+
+        except Exception as e:
+            print(f"[Form] reCAPTCHA error: {e}")
+        finally:
+            await solver.close()
 
     async def submit_form(self):
-        """Submit the form"""
+        """Submit the form and wait for response"""
         submit_btn = self.page.locator("button:has-text('提交')").first
         await submit_btn.click()
-        await asyncio.sleep(3)
+        print("[Form] Submit button clicked, waiting for response...")
+
+        # Wait for either success message or page change
+        try:
+            await self.page.wait_for_load_state("networkidle", timeout=15000)
+        except:
+            pass
+        await asyncio.sleep(5)
         print("[Form] Form submitted!")
 
     async def get_result(self) -> str:
